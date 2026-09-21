@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>LaporJalan - Crowdsourcing Infrastruktur</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet & Lucide -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Plugin Heatmap -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .h-screen-fix { height: calc(var(--vh, 1vh) * 100); }
+        #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; width: 100%; height: 100%; z-index: 1; background: #e5e3df; }
+        .sidebar-transition { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1500; }
+        .basemap-card.active { border-color: #f97316; background-color: #fff7ed; color: #c2410c; }
+        .leaflet-control-container { z-index: 1000; }
+        .leaflet-popup-content img { border-radius: 8px; margin-top: 8px; width: 100%; max-height: 160px; object-fit: cover; }
+        /* Geser kontrol Leaflet di atas supaya tidak tertutup header */
+        .leaflet-top { top: 70px !important; }
+    </style>
+</head>
+<body class="bg-gray-50 overflow-hidden h-screen-fix">
+
+    <!-- HEADER (Tema Oranye) -->
+    <header class="h-16 bg-slate-900/95 backdrop-blur-sm text-white flex items-center justify-between px-4 z-[2000] fixed top-0 w-full shadow-lg">
+        <div class="flex items-center gap-3">
+            <button onclick="toggleSidebar()" class="p-2 hover:bg-slate-800 rounded-lg"><i data-lucide="menu" class="w-6 h-6"></i></button>
+            <h1 class="text-xl font-bold tracking-tight">Lapor<span class="text-orange-500">Jalan</span></h1>
+        </div>
+    </header>
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar" class="sidebar-transition fixed top-16 left-0 w-[70vw] max-w-[260px] h-[calc(100%-64px)] bg-white/95 backdrop-blur-md border-r border-gray-200 shadow-2xl translate-x-0">
+        <div class="p-4 space-y-6">
+            <div>
+                <h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Tindakan</h3>
+                <div class="space-y-3">
+                    <button onclick="toggleReportModal()" class="w-full flex items-center gap-3 p-3 bg-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-200 hover:bg-orange-600 transition">
+                        <i data-lucide="camera" class="w-5 h-5"></i><span>Lapor Jalan Rusak</span>
+                    </button>
+                </div>
+            </div>
+            
+            <hr class="border-gray-100">
+
+            <div>
+                <h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Mode Tampilan</h3>
+                <div class="space-y-2">
+                    <!-- TOGGLE MARKER VS HOTSPOT -->
+                    <button id="btn-mode-titik" onclick="setMapMode('marker')" class="w-full flex items-center justify-between p-3 bg-slate-100 text-slate-800 rounded-xl font-semibold border-2 border-slate-800 transition">
+                        <div class="flex items-center gap-2"><i data-lucide="map-pin" class="w-4 h-4"></i> Titik Laporan</div>
+                        <i data-lucide="check-circle-2" class="w-4 h-4 text-slate-800" id="icon-titik"></i>
+                    </button>
+                    <button id="btn-mode-heat" onclick="setMapMode('heatmap')" class="w-full flex items-center justify-between p-3 bg-white text-gray-500 rounded-xl font-semibold border-2 border-transparent hover:bg-slate-50 transition">
+                        <div class="flex items-center gap-2"><i data-lucide="flame" class="w-4 h-4"></i> Hotspot (Heatmap)</div>
+                        <i data-lucide="check-circle-2" class="w-4 h-4 hidden text-orange-500" id="icon-heat"></i>
+                    </button>
+                </div>
+            </div>
+
+            <hr class="border-gray-100">
+
+            <div>
+                <h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Peta Dasar</h3>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="changeBasemap('osm')" id="btn-osm" class="basemap-card active p-2 border rounded-lg text-center font-bold text-[10px]">Google</button>
+                    <button onclick="changeBasemap('satelit')" id="btn-satelit" class="basemap-card p-2 border rounded-lg text-center font-bold text-[10px]">Hybrid</button>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <div id="map"></div>
+        <!-- FLOAT BUTTON LOCATE (Kanan Bawah) -->
+        <div class="absolute bottom-8 right-6 z-[1000] flex flex-col gap-3">
+            <button onclick="goToMyLocation()" class="w-14 h-14 bg-white rounded-full shadow-2xl flex items-center justify-center border border-gray-100 text-orange-500 hover:scale-110 active:scale-95 transition">
+                <i data-lucide="crosshair" class="w-7 h-7"></i>
+            </button>
+        </div>
+
+    <!-- MODAL TAMBAH LAPORAN -->
+    <div id="report-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[3000] flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl text-slate-800">
+            <h2 class="text-xl font-bold mb-1">Lapor Jalan Rusak</h2>
+            <p class="text-xs text-gray-500 mb-4" id="loc-status">Mengambil lokasi saat ini...</p>
+            
+            <input type="file" id="photo-camera" accept="image/*" capture="environment" class="hidden" onchange="setPhoto(this)">
+            <input type="file" id="photo-gallery" accept="image/*" class="hidden" onchange="setPhoto(this)">
+
+            <div class="flex gap-2 mb-2">
+                <button onclick="document.getElementById('photo-camera').click()" class="flex-1 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl font-bold flex items-center justify-center gap-2 border border-slate-200 transition">
+                    <i data-lucide="camera" class="w-4 h-4"></i> Kamera
+                </button>
+                <button onclick="document.getElementById('photo-gallery').click()" class="flex-1 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl font-bold flex items-center justify-center gap-2 border border-slate-200 transition">
+                    <i data-lucide="image" class="w-4 h-4"></i> Galeri
+                </button>
+            </div>
+            <div id="photo-status" class="text-[10px] text-center text-gray-400 font-semibold mb-3">Wajib sertakan foto kondisi jalan</div>
+            
+            <!-- Pilihan Tingkat Keparahan -->
+            <select id="report-severity" class="w-full p-3 border border-gray-200 rounded-xl mb-3 outline-none focus:ring-2 focus:ring-orange-500 text-sm font-semibold">
+                <option value="Ringan">⚠️ Kerusakan Ringan (Berlubang kecil)</option>
+                <option value="Sedang">🚧 Kerusakan Sedang (Beresiko)</option>
+                <option value="Parah">🚨 Kerusakan Parah (Tidak bisa dilewati)</option>
+            </select>
+
+            <textarea id="report-note" placeholder="Tulis rincian lokasi atau detail kerusakan..." class="w-full p-3 border border-gray-200 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-orange-500 h-20 resize-none text-sm"></textarea>
+            
+            <div class="flex gap-2">
+                <button onclick="toggleReportModal()" class="flex-1 py-3 bg-gray-100 rounded-xl font-bold">Batal</button>
+                <button id="btn-submit-report" onclick="submitReport()" class="flex-1 py-3 bg-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-200">Kirim Laporan</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <script>
+        const SUPABASE_URL = 'https://osdzivauwbgtdaggjont.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9zZHppdmF1d2JndGRhZ2dqb250Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5NTg0OTIsImV4cCI6MjEwNTUzNDQ5Mn0.Jtzsc_qxPpNvSs6V7N-IObuKw4258-WBwwlX00FtLH4'; 
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let myLatLng = null, myMarker = null;
+        let selectedPhotoFile = null;
+        
+        // Layer untuk nampung data
+        let markersLayer = L.layerGroup(); // Kumpulan titik (marker)
+        let heatLayer = L.heatLayer([], { radius: 25, blur: 15, maxZoom: 16 }); // Layer gradasi panas
+        let heatDataArray = []; // Array nyimpen koordinat buat heatmap
+
+        // MAPS
+        const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {maxZoom: 20,subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],attribution: '© Google'});
+        const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {maxZoom: 20,subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],attribution: '© Google'});
+
+        const map = L.map('map', { zoomControl: false, layers: [googleStreets], tap: false }).setView([-0.22, 100.63], 13);
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        const baseMaps = { "osm": googleStreets, "satelit": googleHybrid };
+        
+        // Ikon Custom Jalan Rusak
+        const damageIcon = L.divIcon({ className: 'custom-icon', html: `<svg fill="#f97316" viewBox="0 0 24 24" width="30" height="30"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/></svg>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -30] });
+
+        lucide.createIcons();
+        function setVh() { document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`); }
+        window.addEventListener('resize', setVh); setVh();
+
+        // Aktifkan Layer Marker secara Default
+        markersLayer.addTo(map);
+
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('-translate-x-full'); }
+        
+        function toggleReportModal() { 
+            document.getElementById('sidebar').classList.add('-translate-x-full'); 
+            const modal = document.getElementById('report-modal');
+            modal.classList.toggle('hidden'); 
+            
+            // Ambil GPS pas modal dibuka (Biar hemat baterai, nggak tracking terus)
+            if(!modal.classList.contains('hidden')) {
+                document.getElementById('loc-status').innerText = "Mencari lokasi akurat...";
+                navigator.geolocation.getCurrentPosition(pos => {
+                    myLatLng = [pos.coords.latitude, pos.coords.longitude];
+                    document.getElementById('loc-status').innerHTML = "📍 Lokasi terkunci: " + myLatLng[0].toFixed(4) + ", " + myLatLng[1].toFixed(4);
+                    document.getElementById('loc-status').className = "text-xs text-green-600 font-bold mb-4";
+                    
+                    if(!myMarker) myMarker = L.circleMarker(myLatLng, { radius: 8, fillColor: '#f97316', color: '#fff', weight: 3, fillOpacity: 1 }).addTo(map);
+                    else myMarker.setLatLng(myLatLng);
+                    map.setView(myLatLng, 17);
+                }, err => alert("Gagal dapet lokasi: " + err.message), {enableHighAccuracy: true});
+            }
+        }
+
+        function changeBasemap(key) {
+            Object.values(baseMaps).forEach(layer => map.removeLayer(layer));
+            baseMaps[key].addTo(map);
+            document.querySelectorAll('.basemap-card').forEach(c => c.classList.remove('active'));
+            document.getElementById('btn-' + key).classList.add('active');
+        }
+
+        function goToMyLocation() {
+            navigator.geolocation.getCurrentPosition(pos => {
+                myLatLng = [pos.coords.latitude, pos.coords.longitude];
+                if(!myMarker) myMarker = L.circleMarker(myLatLng, { radius: 8, fillColor: '#f97316', color: '#fff', weight: 3, fillOpacity: 1 }).addTo(map);
+                else myMarker.setLatLng(myLatLng);
+                map.flyTo(myLatLng, 17);
+            });
+        }
+
+        // --- FITUR HOTSPOT (HEATMAP) ---
+        function setMapMode(mode) {
+            const btnTitik = document.getElementById('btn-mode-titik');
+            const btnHeat = document.getElementById('btn-mode-heat');
+            
+            if (mode === 'marker') {
+                map.removeLayer(heatLayer);
+                map.addLayer(markersLayer);
+                
+                // Styling Button
+                btnTitik.classList.replace('bg-white', 'bg-slate-100'); btnTitik.classList.replace('border-transparent', 'border-slate-800'); btnTitik.classList.replace('text-gray-500', 'text-slate-800');
+                btnHeat.classList.replace('bg-slate-100', 'bg-white'); btnHeat.classList.replace('border-slate-800', 'border-transparent'); btnHeat.classList.replace('text-slate-800', 'text-gray-500');
+                document.getElementById('icon-titik').classList.remove('hidden'); document.getElementById('icon-heat').classList.add('hidden');
+            } else {
+                map.removeLayer(markersLayer);
+                map.addLayer(heatLayer);
+                
+                // Styling Button
+                btnHeat.classList.replace('bg-white', 'bg-slate-100'); btnHeat.classList.replace('border-transparent', 'border-slate-800'); btnHeat.classList.replace('text-gray-500', 'text-slate-800');
+                btnTitik.classList.replace('bg-slate-100', 'bg-white'); btnTitik.classList.replace('border-slate-800', 'border-transparent'); btnTitik.classList.replace('text-slate-800', 'text-gray-500');
+                document.getElementById('icon-heat').classList.remove('hidden'); document.getElementById('icon-titik').classList.add('hidden');
+            }
+        }
+
+        // --- UPLOAD & KOMPRESI ---
+        function setPhoto(input) {
+            if (input.files && input.files[0]) {
+                selectedPhotoFile = input.files[0];
+                document.getElementById('photo-status').innerHTML = "✅ " + selectedPhotoFile.name.substring(0, 15) + "...";
+                document.getElementById('photo-status').className = "text-xs text-center text-orange-600 font-bold mb-3";
+            }
+        }
+
+        function compressImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        const scaleFactor = 800 / img.width;
+                        canvas.width = 800; canvas.height = img.height * scaleFactor;
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.7));
+                    };
+                };
+            });
+        }
+
+        async function submitReport() {
+            if (!myLatLng) return alert("Tunggu sampai GPS nemu lokasi lu, cuy!");
+            if (!selectedPhotoFile) return alert("Pilih fotonya dulu bos!");
+            
+            const severity = document.getElementById('report-severity').value;
+            const note = document.getElementById('report-note').value;
+            const btn = document.getElementById('btn-submit-report');
+            btn.innerText = "Mengunggah..."; btn.disabled = true;
+
+            try {
+                // Kompres & Upload
+                const base64Image = await compressImage(selectedPhotoFile);
+                const res = await fetch(base64Image);
+                const blob = await res.blob();
+                
+                const fileName = `rusak_${Date.now()}.jpg`;
+                const { error: uploadError } = await supabaseClient.storage.from('road_images').upload(fileName, blob);
+                if (uploadError) throw uploadError;
+
+                const { data: publicUrlData } = supabaseClient.storage.from('road_images').getPublicUrl(fileName);
+                
+                // Insert Database
+                const { error: dbError } = await supabaseClient.from('road_reports').insert({
+                    lat: myLatLng[0], lng: myLatLng[1], severity: severity, note: note, image_url: publicUrlData.publicUrl
+                });
+
+                if (dbError) throw dbError;
+
+                alert("Laporan berhasil dikirim! Terima kasih kontribusinya.");
+                toggleReportModal();
+                
+                // Bersihkan form
+                document.getElementById('report-note').value = ''; 
+                selectedPhotoFile = null;
+                document.getElementById('photo-status').innerHTML = "Wajib sertakan foto kondisi jalan";
+                document.getElementById('photo-status').className = "text-[10px] text-center text-gray-400 font-semibold mb-3";
+
+                // Muat ulang data terbaru biar langsung muncul
+                fetchData();
+
+            } catch (err) { alert("Gagal kirim: " + err.message); } 
+            finally { btn.innerText = "Kirim Laporan"; btn.disabled = false; }
+        }
+
+        // --- RENDER DATA ---
+        function renderReport(r) {
+            // 1. Masukkan ke Layer Marker
+            let badgeColor = r.severity === 'Parah' ? '#dc2626' : (r.severity === 'Sedang' ? '#f59e0b' : '#3b82f6');
+            
+            const popupContent = `
+                <div style="min-width:160px;">
+                    <span style="background:${badgeColor}; color:white; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:bold;">${r.severity}</span>
+                    <p style="margin:6px 0; font-size:13px; font-weight:600;">"${r.note || 'Tanpa keterangan'}"</p>
+                    <p style="margin:0; font-size:10px; color:gray;">Status: ${r.status}</p>
+                    ${r.image_url ? `<img src="${r.image_url}" alt="Jalan Rusak">` : ''}
+                </div>
+            `;
+            L.marker([r.lat, r.lng], { icon: damageIcon }).bindPopup(popupContent).addTo(markersLayer);
+
+            // 2. Masukkan ke Data Heatmap (Parah = intensitas lebih tinggi)
+            let heatIntensity = r.severity === 'Parah' ? 1.0 : (r.severity === 'Sedang' ? 0.6 : 0.3);
+            heatDataArray.push([r.lat, r.lng, heatIntensity]);
+        }
+
+        async function fetchData() {
+            // Bersihkan layer sebelum load baru
+            markersLayer.clearLayers();
+            heatDataArray = [];
+
+            const { data } = await supabaseClient.from('road_reports').select('*');
+            if (data) {
+                data.forEach(r => renderReport(r));
+                // Update Heatmap
+                heatLayer.setLatLngs(heatDataArray);
+            }
+        }
+
+        // Mulai aplikasi
+        fetchData();
+        // Nggak ada watchPosition, jadi browser tenang :)
+    </script>
+</body>
+</html>
